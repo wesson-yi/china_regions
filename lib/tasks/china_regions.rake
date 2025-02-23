@@ -72,13 +72,55 @@ module ChinaRegions
     module_function
 
     def all(filename = 'pca-code.json')
-      data_hash(filename).each { |province_hash| creating_province(province_hash) }
+      # data_hash(filename).each { |province_hash| creating_province(province_hash) }
+      province_count, city_count, district_count = batch_creating_province(data_hash(filename))
 
       puts "Imported done!"
       puts ''
-      puts "  Total of #{Province.count} provinces."
-      puts "  Total of #{City.count} cities."
-      puts "  Total of #{District.count} districts."
+      puts "  Total of #{province_count} provinces."
+      puts "  Total of #{city_count} cities."
+      puts "  Total of #{district_count} districts."
+    end
+
+
+    def batch_creating_province(prov_hash)
+      provinces_data, cities_data, districts_data = [], [], []
+
+      prov_hash.each do |province|
+        provinces_data << { name: province['name'], **build_params(province["name"], province['code']) }
+
+        province['children'].each do |city|
+          cities_data << {
+            province_code: province['code'],
+            name: city['name'],
+            **build_params(city["name"], city['code']),
+            **city_level(city['name'])
+          }
+
+          city['children'].each do |district|
+            districts_data << {
+              city_code: city['code'],
+              name: district['name'],
+              **build_params(district['name'], district['code']),
+            }
+          end
+        end
+      end
+
+      # 批量创建省份
+      province_count = Province.insert_all(provinces_data).count
+
+      # 批量创建城市
+      provinces_hash_id = Province.select(:code, :id).each_with_object({}) { |obj, arr| arr[obj.code.to_s] = obj.id }
+      cities_data.map { |city| city[:province_id] = provinces_hash_id[city.delete(:province_code)] }
+      city_count = City.insert_all(cities_data).count
+
+      # 批量创建区县
+      cities_hash_id = City.select(:code, :id).each_with_object({}) { |obj, arr| arr[obj.code.to_s] = obj.id }
+      districts_data.map { |district| district[:city_id] = cities_hash_id[district.delete(:city_code)] }
+      district_count = District.insert_all(districts_data).count
+
+      [province_count, city_count, district_count]
     end
 
     def creating_province(prov_hash)
